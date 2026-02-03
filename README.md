@@ -1,6 +1,14 @@
 # Dynamic Tip
 
-Tracks Solana priority fee tips across multiple block builders (Jito, Nextblock, Zeroslot, etc.) and provides percentile-based fee estimates via RPC and WebSocket.
+A Solana tip tracking service that monitors tips sent to various block builders and provides real-time estimates.
+
+## What It Does
+
+- Connects to Solana via Yellowstone gRPC to stream transaction data
+- Tracks tip amounts sent to 7 block builders: Jito, Nextblock, Sender, Zeroslot, Bloxroute, Astralane, and Blockrazor
+- Maintains a rolling window of the last 50 blocks per processor
+- Calculates percentile-based tip estimates (e.g., p50, p75, p98)
+- Exposes data via RPC and WebSocket APIs
 
 ## Setup
 
@@ -37,16 +45,16 @@ Response:
   "result": [
     {
       "processor": "jito",
-      "fees": [
-        {"level": 5000, "fee": 10000},
-        {"level": 9800, "fee": 100000}
+      "tips": [
+        {"level": 5000, "tip": 10000},
+        {"level": 9800, "tip": 100000}
       ]
     },
     {
       "processor": "nextblock",
-      "fees": [
-        {"level": 5000, "fee": 8000},
-        {"level": 9800, "fee": 85000}
+      "tips": [
+        {"level": 5000, "tip": 8000},
+        {"level": 9800, "tip": 85000}
       ]
     }
   ]
@@ -55,7 +63,7 @@ Response:
 
 - `levels`: percentiles in basis points (5000 = p50, 9800 = p98)
 - `processors`: optional filter (e.g., `["jito","nextblock"]`)
-- `fee`: tip amount in lamports
+- `tip`: tip amount in lamports
 
 ### WebSocket (GET /ws)
 
@@ -79,9 +87,9 @@ Response (on each update):
       "slot_end": 312345728,
       "tips": 150,
       "percentiles": [
-        {"level": 5000, "fee": 10000},
-        {"level": 7500, "fee": 50000},
-        {"level": 9800, "fee": 100000}
+        {"level": 5000, "tip": 10000},
+        {"level": 7500, "tip": 50000},
+        {"level": 9800, "tip": 100000}
       ]
     }
   ]

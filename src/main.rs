@@ -207,13 +207,13 @@ impl TipTracker {
         let (slot_start, slot_end) = data.slot_range();
 
         let percentiles = levels.iter().map(|&level| {
-            let fee = if tips.is_empty() {
+            let tip = if tips.is_empty() {
                 0
             } else {
                 let idx = ((tips.len() - 1) as f64 * (level as f64 / 10000.0).min(1.0)).round() as usize;
                 tips[idx]
             };
-            LevelFee { level, fee }
+            LevelTip { level, tip }
         }).collect();
 
         ProcessorStats {
@@ -231,25 +231,25 @@ impl TipTracker {
         WsUpdate { data }
     }
 
-    fn get_percentiles(&self, processors: &[Processor], levels: &[u32]) -> Vec<ProcessorFees> {
+    fn get_percentiles(&self, processors: &[Processor], levels: &[u32]) -> Vec<ProcessorTips> {
         let procs = if processors.is_empty() { Processor::all().to_vec() } else { processors.to_vec() };
 
         procs.iter().map(|proc| {
             let data = self.data.get(proc).unwrap();
-            let mut tips: Vec<u64> = data.blocks.iter().flat_map(|(_, t)| t.iter().copied()).collect();
-            tips.sort_unstable();
+            let mut all_tips: Vec<u64> = data.blocks.iter().flat_map(|(_, t)| t.iter().copied()).collect();
+            all_tips.sort_unstable();
 
-            let fees = levels.iter().map(|&level| {
-                let fee = if tips.is_empty() {
+            let tips = levels.iter().map(|&level| {
+                let tip = if all_tips.is_empty() {
                     0
                 } else {
-                    let idx = ((tips.len() - 1) as f64 * (level as f64 / 10000.0).min(1.0)).round() as usize;
-                    tips[idx]
+                    let idx = ((all_tips.len() - 1) as f64 * (level as f64 / 10000.0).min(1.0)).round() as usize;
+                    all_tips[idx]
                 };
-                LevelFee { level, fee }
+                LevelTip { level, tip }
             }).collect();
 
-            ProcessorFees { processor: *proc, fees }
+            ProcessorTips { processor: *proc, tips }
         }).collect()
     }
 }
@@ -262,7 +262,7 @@ struct ProcessorStats {
     slot_start: u64,
     slot_end: u64,
     tips: usize,
-    percentiles: Vec<LevelFee>,
+    percentiles: Vec<LevelTip>,
 }
 
 #[derive(Clone, Serialize)]
@@ -288,19 +288,19 @@ struct RpcParams {
 struct RpcResponse {
     jsonrpc: String,
     id: serde_json::Value,
-    result: Vec<ProcessorFees>,
+    result: Vec<ProcessorTips>,
 }
 
 #[derive(Serialize)]
-struct ProcessorFees {
+struct ProcessorTips {
     processor: Processor,
-    fees: Vec<LevelFee>,
+    tips: Vec<LevelTip>,
 }
 
 #[derive(Clone, Serialize)]
-struct LevelFee {
+struct LevelTip {
     level: u32,
-    fee: u64,
+    tip: u64,
 }
 
 #[derive(Deserialize)]
