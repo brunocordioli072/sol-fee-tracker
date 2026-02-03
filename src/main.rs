@@ -126,8 +126,14 @@ impl Processor {
     }
 }
 
+#[derive(Clone)]
+struct TipInfo {
+    signature: String,
+    lamports: u64,
+}
+
 struct TipData {
-    blocks: VecDeque<(u64, Vec<u64>)>,
+    blocks: VecDeque<(u64, Vec<TipInfo>)>,
     last_broadcast_slot: u64,
 }
 
@@ -136,14 +142,14 @@ impl TipData {
         Self { blocks: VecDeque::with_capacity(MAX_BLOCKS), last_broadcast_slot: 0 }
     }
 
-    fn add_tip(&mut self, slot: u64, lamports: u64) {
+    fn add_tip(&mut self, slot: u64, signature: String, lamports: u64) {
         if let Some((last_slot, tips)) = self.blocks.back_mut() {
             if *last_slot == slot {
-                tips.push(lamports);
+                tips.push(TipInfo { signature, lamports });
                 return;
             }
         }
-        self.blocks.push_back((slot, vec![lamports]));
+        self.blocks.push_back((slot, vec![TipInfo { signature, lamports }]));
         if self.blocks.len() > MAX_BLOCKS {
             self.blocks.pop_front();
         }
@@ -183,9 +189,9 @@ impl TipTracker {
         self.account_to_processor.get(pk).copied()
     }
 
-    fn add_tip(&mut self, processor: Processor, slot: u64, lamports: u64) {
+    fn add_tip(&mut self, processor: Processor, slot: u64, signature: String, lamports: u64) {
         if let Some(data) = self.data.get_mut(&processor) {
-            data.add_tip(slot, lamports);
+            data.add_tip(slot, signature, lamports);
         }
     }
 
@@ -202,7 +208,7 @@ impl TipTracker {
 
     fn get_processor_stats(&self, proc: Processor, levels: &[u32]) -> ProcessorStats {
         let data = self.data.get(&proc).unwrap();
-        let mut tips: Vec<u64> = data.blocks.iter().flat_map(|(_, t)| t.iter().copied()).collect();
+        let mut tips: Vec<u64> = data.blocks.iter().flat_map(|(_, t)| t.iter().map(|ti| ti.lamports)).collect();
         tips.sort_unstable();
         let (slot_start, slot_end) = data.slot_range();
 
@@ -236,7 +242,7 @@ impl TipTracker {
 
         procs.iter().map(|proc| {
             let data = self.data.get(proc).unwrap();
-            let mut all_tips: Vec<u64> = data.blocks.iter().flat_map(|(_, t)| t.iter().copied()).collect();
+            let mut all_tips: Vec<u64> = data.blocks.iter().flat_map(|(_, t)| t.iter().map(|ti| ti.lamports)).collect();
             all_tips.sort_unstable();
 
             let tips = levels.iter().map(|&level| {
@@ -250,6 +256,23 @@ impl TipTracker {
             }).collect();
 
             ProcessorTips { processor: *proc, tips }
+        }).collect()
+    }
+
+    fn get_window(&self, processors: &[Processor]) -> Vec<ProcessorWindow> {
+        let procs = if processors.is_empty() { Processor::all().to_vec() } else { processors.to_vec() };
+
+        procs.iter().map(|proc| {
+            let data = self.data.get(proc).unwrap();
+            let blocks = data.blocks.iter().map(|(slot, tips)| {
+                let tips = tips.iter().map(|ti| TipEntry {
+                    signature: ti.signature.clone(),
+                    tip: ti.lamports,
+                }).collect();
+                SlotTips { slot: *slot, tips }
+            }).collect();
+
+            ProcessorWindow { processor: *proc, blocks }
         }).collect()
     }
 }
@@ -303,12 +326,50 @@ struct LevelTip {
     tip: u64,
 }
 
+#[derive(Serialize)]
+struct TipEntry {
+    signature: String,
+    tip: u64,
+}
+
+#[derive(Serialize)]
+struct SlotTips {
+    slot: u64,
+    tips: Vec<TipEntry>,
+}
+
+#[derive(Serialize)]
+struct ProcessorWindow {
+    processor: Processor,
+    blocks: Vec<SlotTips>,
+}
+
 #[derive(Deserialize)]
 struct WsSubscribe {
     #[serde(default)]
     levels: Option<Vec<u32>>,
     #[serde(default)]
     processors: Option<Vec<Processor>>,
+}
+
+#[derive(Deserialize)]
+struct WindowRequest {
+    jsonrpc: String,
+    id: serde_json::Value,
+    #[serde(default)]
+    params: Option<Vec<WindowParams>>,
+}
+
+#[derive(Deserialize, Default)]
+struct WindowParams {
+    processors: Option<Vec<Processor>>,
+}
+
+#[derive(Serialize)]
+struct WindowResponse {
+    jsonrpc: String,
+    id: serde_json::Value,
+    result: Vec<ProcessorWindow>,
 }
 
 #[derive(Clone)]
@@ -336,6 +397,16 @@ async fn handle_rpc(State(state): State<AppState>, Json(req): Json<RpcRequest>) 
     let result = tracker.get_percentiles(&processors, &levels);
 
     Json(RpcResponse { jsonrpc: req.jsonrpc, id: req.id, result })
+}
+
+async fn handle_window(State(state): State<AppState>, Json(req): Json<WindowRequest>) -> Json<WindowResponse> {
+    let params = req.params.and_then(|p| p.into_iter().next()).unwrap_or_default();
+    let processors = params.processors.unwrap_or_default();
+
+    let tracker = state.tracker.read().unwrap();
+    let result = tracker.get_window(&processors);
+
+    Json(WindowResponse { jsonrpc: req.jsonrpc, id: req.id, result })
 }
 
 async fn handle_ws(State(state): State<AppState>, ws: WebSocketUpgrade) -> impl IntoResponse {
@@ -396,6 +467,7 @@ async fn main() -> anyhow::Result<()> {
 
     let app = Router::new()
         .route("/", post(handle_rpc))
+        .route("/window", post(handle_window))
         .route("/ws", get(handle_ws))
         .with_state(state);
 
@@ -433,6 +505,7 @@ async fn main() -> anyhow::Result<()> {
         let UpdateOneof::Transaction(tx_update) = msg?.update_oneof.unwrap() else { continue };
         let slot = tx_update.slot;
         let info = tx_update.transaction.unwrap();
+        let signature = bs58::encode(&info.signature).into_string();
         let meta = match &info.meta { Some(m) => m, None => continue };
         let message = match info.transaction.and_then(|t| t.message) { Some(m) => m, None => continue };
 
@@ -458,7 +531,7 @@ async fn main() -> anyhow::Result<()> {
             let tracker_read = tracker.read().unwrap();
             if let Some(processor) = tracker_read.get_processor(&keys[to_idx]) {
                 drop(tracker_read);
-                tracker.write().unwrap().add_tip(processor, slot, lamports);
+                tracker.write().unwrap().add_tip(processor, slot, signature.clone(), lamports);
             }
         }
 

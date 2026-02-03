@@ -2,8 +2,9 @@
   "name": "dynamic-tip-test",
   "type": "module",
   "scripts": {
-    "rpc": "node rpc.js",
-    "ws": "node ws.js"
+    "percentiles": "node index.js percentiles",
+    "window": "node index.js window",
+    "ws": "node index.js ws"
   },
   "dependencies": {
     "ws": "^8.18.0"

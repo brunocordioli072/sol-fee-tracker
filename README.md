@@ -30,7 +30,7 @@ Server starts on `http://127.0.0.1:7000`
 
 ### RPC (POST /)
 
-Request fee percentiles:
+Request tip percentiles:
 ```bash
 curl -X POST http://127.0.0.1:7000 \
   -H "Content-Type: application/json" \
@@ -63,6 +63,48 @@ Response:
 
 - `levels`: percentiles in basis points (5000 = p50, 9800 = p98)
 - `processors`: optional filter (e.g., `["jito","nextblock"]`)
+- `tip`: tip amount in lamports
+
+### Window (POST /window)
+
+Get the raw rolling window data (all tips per slot):
+```bash
+curl -X POST http://127.0.0.1:7000/window \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":1,"params":[{"processors":["jito"]}]}'
+```
+
+Response:
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "result": [
+    {
+      "processor": "jito",
+      "blocks": [
+        {
+          "slot": 312345678,
+          "tips": [
+            {"signature": "5K8s...abc", "tip": 10000},
+            {"signature": "3Jx2...def", "tip": 25000}
+          ]
+        },
+        {
+          "slot": 312345679,
+          "tips": [
+            {"signature": "7Ym4...ghi", "tip": 15000}
+          ]
+        }
+      ]
+    }
+  ]
+}
+```
+
+- `processors`: optional filter (e.g., `["jito","nextblock"]`)
+- `blocks`: array of slots with tips (up to 50 blocks)
+- `signature`: transaction signature (base58)
 - `tip`: tip amount in lamports
 
 ### WebSocket (GET /ws)
