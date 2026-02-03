@@ -1,0 +1,11 @@
+{
+  "name": "dynamic-tip-test",
+  "type": "module",
+  "scripts": {
+    "rpc": "node rpc.js",
+    "ws": "node ws.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}
