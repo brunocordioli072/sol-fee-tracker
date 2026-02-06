@@ -493,8 +493,8 @@ async fn main() -> anyhow::Result<()> {
         transactions: hashmap! {
             "tips".to_string() => SubscribeRequestFilterTransactions {
                 vote: Some(false),
-                failed: Some(true),
                 account_include: all_accounts(),
+                account_exclude: config.network.exclude_accounts.clone(),
                 ..Default::default()
             }
         },
