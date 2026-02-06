@@ -1,6 +1,6 @@
-# Dynamic Tip
+# Sol Fee Tracker
 
-A Solana tip tracking service that monitors tips sent to various block builders and provides real-time estimates.
+A Solana monitoring service that tracks tips sent to block builders and priority fees across all transactions, providing real-time estimates.
 
 ## What It Does
 
