@@ -11,6 +11,7 @@ pub struct Config {
 pub struct NetworkConfig {
     pub grpc_url: String,
     pub grpc_token: String,
+    pub max_blocks: usize,
 }
 
 static CONFIG: OnceLock<Config> = OnceLock::new();
