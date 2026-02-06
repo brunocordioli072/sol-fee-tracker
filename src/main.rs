@@ -23,7 +23,6 @@ use yellowstone_grpc_proto::prelude::{
 pub mod config;
 
 const SYSTEM_PROGRAM: Pubkey = solana_sdk::system_program::ID;
-const MAX_BLOCKS: usize = 50;
 const PORT: u16 = 7000;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -139,7 +138,7 @@ struct TipData {
 
 impl TipData {
     fn new() -> Self {
-        Self { blocks: VecDeque::with_capacity(MAX_BLOCKS), last_broadcast_slot: 0 }
+        Self { blocks: VecDeque::new(), last_broadcast_slot: 0 }
     }
 
     fn add_tip(&mut self, slot: u64, signature: String, lamports: u64) {
@@ -150,7 +149,7 @@ impl TipData {
             }
         }
         self.blocks.push_back((slot, vec![TipInfo { signature, lamports }]));
-        if self.blocks.len() > MAX_BLOCKS {
+        if self.blocks.len() > config::Config::get().network.max_blocks {
             self.blocks.pop_front();
         }
     }
@@ -197,8 +196,9 @@ impl TipTracker {
 
     fn should_broadcast(&mut self, slot: u64) -> bool {
         // Check if any processor has enough data and new slot
+        let max_blocks = config::Config::get().network.max_blocks;
         for data in self.data.values_mut() {
-            if data.blocks.len() >= MAX_BLOCKS && slot != data.last_broadcast_slot {
+            if data.blocks.len() >= max_blocks && slot != data.last_broadcast_slot {
                 data.last_broadcast_slot = slot;
                 return true;
             }
@@ -471,7 +471,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/ws", get(handle_ws))
         .with_state(state);
 
-    let addr = SocketAddr::from(([127, 0, 0, 1], PORT));
+    let addr = SocketAddr::from(([0, 0, 0, 0], PORT));
     println!("HTTP: http://{}", addr);
     println!("WS:   ws://{}/ws", addr);
 
@@ -479,6 +479,7 @@ async fn main() -> anyhow::Result<()> {
         let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
         axum::serve(listener, app).await.unwrap();
     });
+
 
     let mut client = GeyserGrpcClient::build_from_shared(config.network.grpc_url.clone())?
         .x_token(Some(config.network.grpc_token.clone()))?
