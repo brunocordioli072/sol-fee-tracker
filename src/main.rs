@@ -1,5 +1,6 @@
 use std::net::SocketAddr;
 use std::sync::{Arc, RwLock};
+use std::time::Duration;
 
 use axum::routing::{get, post};
 use axum::Router;
@@ -8,6 +9,7 @@ use maplit::hashmap;
 use serde::Deserialize;
 use solana_sdk::pubkey::Pubkey;
 use tokio::sync::broadcast;
+use tokio::time::sleep;
 use yellowstone_grpc_client::{ClientTlsConfig, GeyserGrpcClient};
 use yellowstone_grpc_proto::prelude::{
     subscribe_update::UpdateOneof, CommitmentLevel, SubscribeRequest,
@@ -89,6 +91,21 @@ fn parse_compute_unit_price(instruction_data: &[u8]) -> Option<u64> {
     }
 }
 
+// Helper functions to handle RwLock poisoning gracefully
+fn read_tracker<T>(lock: &RwLock<T>) -> Result<std::sync::RwLockReadGuard<'_, T>, ()> {
+    lock.read().or_else(|e| {
+        eprintln!("RwLock poisoned (read), recovering: {}", e);
+        Ok(e.into_inner())
+    })
+}
+
+fn write_tracker<T>(lock: &RwLock<T>) -> Result<std::sync::RwLockWriteGuard<'_, T>, ()> {
+    lock.write().or_else(|e| {
+        eprintln!("RwLock poisoned (write), recovering: {}", e);
+        Ok(e.into_inner())
+    })
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let _ = config::Config::init();
@@ -116,120 +133,168 @@ async fn main() -> anyhow::Result<()> {
         .with_state(state);
 
     let addr = SocketAddr::from(([0, 0, 0, 0], PORT));
-    println!("HTTP: http://{}", addr);
-    println!("WS:   ws://{}/ws", addr);
+    println!("Server started on http://{}", addr);
+    println!("\nTip Endpoints:");
+    println!("  POST http://{}/tips         - Get tip percentiles", addr);
+    println!("  POST http://{}/tips/window  - Get tip window data", addr);
+    println!("  WS   ws://{}/tips/ws        - Tip updates stream", addr);
+    println!("\nFee Endpoints:");
+    println!("  POST http://{}/fees         - Get fee percentiles", addr);
+    println!("  POST http://{}/fees/window  - Get fee window data", addr);
+    println!("  WS   ws://{}/fees/ws        - Fee updates stream\n", addr);
 
     tokio::spawn(async move {
-        let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
-        axum::serve(listener, app).await.unwrap();
+        let listener = tokio::net::TcpListener::bind(addr).await
+            .expect("Failed to bind server address");
+        axum::serve(listener, app).await
+            .expect("Failed to start server");
     });
 
 
-    let mut client = GeyserGrpcClient::build_from_shared(config.network.grpc_url.clone())?
-        .x_token(Some(config.network.grpc_token.clone()))?
-        .tls_config(ClientTlsConfig::new().with_native_roots())?
-        .connect()
-        .await?;
+    // Reconnection loop with exponential backoff
+    let mut retry_delay = Duration::from_secs(1);
+    let max_retry_delay = Duration::from_secs(60);
 
-    let (mut subscribe_tx, mut stream) = client.subscribe().await?;
+    loop {
+        println!("Connecting to gRPC...");
 
-    subscribe_tx.send(SubscribeRequest {
-        transactions: hashmap! {
-            "tips".to_string() => SubscribeRequestFilterTransactions {
-                vote: Some(false),
-                account_include: all_accounts(),
-                account_exclude: config.network.exclude_accounts.clone(),
+        let connect_result = async {
+            let mut client = GeyserGrpcClient::build_from_shared(config.network.grpc_url.clone())?
+                .x_token(Some(config.network.grpc_token.clone()))?
+                .tls_config(ClientTlsConfig::new().with_native_roots())?
+                .connect()
+                .await?;
+
+            let (mut subscribe_tx, mut stream) = client.subscribe().await?;
+
+            subscribe_tx.send(SubscribeRequest {
+                transactions: hashmap! {
+                    "tips".to_string() => SubscribeRequestFilterTransactions {
+                        vote: Some(false),
+                        account_include: all_accounts(),
+                        account_exclude: config.network.exclude_accounts.clone(),
+                        ..Default::default()
+                    },
+                    "fees".to_string() => SubscribeRequestFilterTransactions {
+                        vote: Some(false),
+                        account_exclude: config.network.exclude_accounts.clone(),
+                        ..Default::default()
+                    }
+                },
+                commitment: Some(CommitmentLevel::Processed as i32),
                 ..Default::default()
-            },
-            "fees".to_string() => SubscribeRequestFilterTransactions {
-                vote: Some(false),
-                account_exclude: config.network.exclude_accounts.clone(),
-                ..Default::default()
-            }
-        },
-        commitment: Some(CommitmentLevel::Processed as i32),
-        ..Default::default()
-    }).await?;
+            }).await?;
 
-    while let Some(msg) = stream.next().await {
-        let msg = msg?;
-        let filters = msg.filters;
-        let Some(UpdateOneof::Transaction(tx_update)) = msg.update_oneof else { continue };
-        let slot = tx_update.slot;
-        let info = tx_update.transaction.unwrap();
-        let signature = bs58::encode(&info.signature).into_string();
-        let meta = match &info.meta { Some(m) => m, None => continue };
-        let message = match info.transaction.and_then(|t| t.message) { Some(m) => m, None => continue };
+            println!("Connected to gRPC, processing transactions...");
+            retry_delay = Duration::from_secs(1); // Reset retry delay on successful connection
 
-        let is_tip = filters.iter().any(|f| f == "tips");
-        let is_fee = filters.iter().any(|f| f == "fees");
+            while let Some(msg) = stream.next().await {
+                let msg = msg?;
+                let filters = msg.filters;
+                let Some(UpdateOneof::Transaction(tx_update)) = msg.update_oneof else { continue };
+                let slot = tx_update.slot;
 
-        // Tip processing
-        if is_tip {
-            let mut keys: Vec<Pubkey> = message.account_keys.iter()
-                .filter_map(|k| Pubkey::try_from(k.as_slice()).ok())
-                .collect();
-            for addr in meta.loaded_writable_addresses.iter().chain(&meta.loaded_readonly_addresses) {
-                if let Ok(pk) = Pubkey::try_from(addr.as_slice()) { keys.push(pk); }
-            }
+                // Fixed: Use pattern matching instead of unwrap
+                let Some(info) = tx_update.transaction else {
+                    eprintln!("Warning: Transaction data missing for slot {}", slot);
+                    continue;
+                };
 
-            let sys_idx = keys.iter().position(|k| *k == SYSTEM_PROGRAM);
+                let signature = bs58::encode(&info.signature).into_string();
+                let meta = match &info.meta { Some(m) => m, None => continue };
+                let message = match info.transaction.and_then(|t| t.message) { Some(m) => m, None => continue };
 
-            let all_ixs = message.instructions.iter().map(|ix| (&ix.program_id_index, &ix.accounts, &ix.data))
-                .chain(meta.inner_instructions.iter().flat_map(|inner|
-                    inner.instructions.iter().map(|ix| (&ix.program_id_index, &ix.accounts, &ix.data))));
+                let is_tip = filters.iter().any(|f| f == "tips");
+                let is_fee = filters.iter().any(|f| f == "fees");
 
-            for (prog_idx, accounts, data) in all_ixs {
-                if sys_idx != Some(*prog_idx as usize) || accounts.len() < 2 { continue; }
-                let Some(lamports) = tips::parse_transfer(data) else { continue };
-                let to_idx = accounts[1] as usize;
-                if to_idx >= keys.len() { continue; }
+                // Tip processing
+                if is_tip {
+                    let mut keys: Vec<Pubkey> = message.account_keys.iter()
+                        .filter_map(|k| Pubkey::try_from(k.as_slice()).ok())
+                        .collect();
+                    for addr in meta.loaded_writable_addresses.iter().chain(&meta.loaded_readonly_addresses) {
+                        if let Ok(pk) = Pubkey::try_from(addr.as_slice()) { keys.push(pk); }
+                    }
 
-                let tracker_read = tracker.read().unwrap();
-                if let Some(processor) = tracker_read.get_processor(&keys[to_idx]) {
-                    drop(tracker_read);
-                    tracker.write().unwrap().add_tip(processor, slot, signature.clone(), lamports);
+                    let sys_idx = keys.iter().position(|k| *k == SYSTEM_PROGRAM);
+
+                    let all_ixs = message.instructions.iter().map(|ix| (&ix.program_id_index, &ix.accounts, &ix.data))
+                        .chain(meta.inner_instructions.iter().flat_map(|inner|
+                            inner.instructions.iter().map(|ix| (&ix.program_id_index, &ix.accounts, &ix.data))));
+
+                    for (prog_idx, accounts, data) in all_ixs {
+                        if sys_idx != Some(*prog_idx as usize) || accounts.len() < 2 { continue; }
+                        let Some(lamports) = tips::parse_transfer(data) else { continue };
+                        let to_idx = accounts[1] as usize;
+                        if to_idx >= keys.len() { continue; }
+
+                        // Fixed: Use helper function for lock poisoning recovery
+                        if let Ok(tracker_read) = read_tracker(&tracker) {
+                            if let Some(processor) = tracker_read.get_processor(&keys[to_idx]) {
+                                drop(tracker_read);
+                                if let Ok(mut tracker_write) = write_tracker(&tracker) {
+                                    tracker_write.add_tip(processor, slot, signature.clone(), lamports);
+                                }
+                            }
+                        }
+                    }
+
+                    if let Ok(mut t) = write_tracker(&tracker) {
+                        if t.should_broadcast(slot) {
+                            let _ = tx.send(slot);
+                        }
+                    }
                 }
-            }
 
-            let mut t = tracker.write().unwrap();
-            if t.should_broadcast(slot) {
-                let _ = tx.send(slot);
-            }
-        }
+                // Priority fee processing (all transactions)
+                if is_fee {
+                    // Parse account keys to find compute budget program
+                    let keys: Vec<Pubkey> = message.account_keys.iter()
+                        .filter_map(|k| Pubkey::try_from(k.as_slice()).ok())
+                        .collect();
 
-        // Priority fee processing (all transactions)
-        if is_fee {
-            // Parse account keys to find compute budget program
-            let keys: Vec<Pubkey> = message.account_keys.iter()
-                .filter_map(|k| Pubkey::try_from(k.as_slice()).ok())
-                .collect();
+                    let cb_idx = keys.iter().position(|k| *k == COMPUTE_BUDGET_PROGRAM);
 
-            let cb_idx = keys.iter().position(|k| *k == COMPUTE_BUDGET_PROGRAM);
+                    // Look for SetComputeUnitPrice instruction
+                    let mut cu_price: Option<u64> = None;
 
-            // Look for SetComputeUnitPrice instruction
-            let mut cu_price: Option<u64> = None;
+                    for ix in &message.instructions {
+                        if Some(ix.program_id_index as usize) == cb_idx {
+                            if let Some(price) = parse_compute_unit_price(&ix.data) {
+                                cu_price = Some(price);
+                                break;
+                            }
+                        }
+                    }
 
-            for ix in &message.instructions {
-                if Some(ix.program_id_index as usize) == cb_idx {
-                    if let Some(price) = parse_compute_unit_price(&ix.data) {
-                        cu_price = Some(price);
-                        break;
+                    // If compute unit price was set, track it
+                    if let Some(price) = cu_price {
+                        if let Ok(mut ft) = write_tracker(&fee_tracker) {
+                            ft.add_fee(slot, signature.clone(), price);
+                        }
+                    }
+
+                    if let Ok(mut ft) = write_tracker(&fee_tracker) {
+                        if ft.should_broadcast(slot) {
+                            let _ = fee_tx.send(slot);
+                        }
                     }
                 }
             }
 
-            // If compute unit price was set, track it
-            if let Some(price) = cu_price {
-                fee_tracker.write().unwrap().add_fee(slot, signature.clone(), price);
-            }
+            Ok::<(), anyhow::Error>(())
+        }.await;
 
-            let mut ft = fee_tracker.write().unwrap();
-            if ft.should_broadcast(slot) {
-                let _ = fee_tx.send(slot);
+        match connect_result {
+            Ok(_) => {
+                eprintln!("gRPC stream ended normally, reconnecting...");
+            }
+            Err(e) => {
+                eprintln!("gRPC error: {}, reconnecting in {:?}...", e, retry_delay);
             }
         }
-    }
 
-    Ok(())
+        sleep(retry_delay).await;
+        retry_delay = (retry_delay * 2).min(max_retry_delay);
+    }
 }

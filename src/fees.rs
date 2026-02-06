@@ -12,6 +12,14 @@ use crate::config;
 use crate::window::{RollingWindow, percentile};
 use crate::{AppState, RpcRequest, WindowRequest, WsSubscribe};
 
+// Helper function to handle RwLock poisoning gracefully
+fn read_lock<T>(lock: &RwLock<T>) -> std::sync::RwLockReadGuard<'_, T> {
+    lock.read().unwrap_or_else(|e| {
+        eprintln!("RwLock poisoned (read), recovering");
+        e.into_inner()
+    })
+}
+
 #[derive(Clone)]
 struct FeeInfo {
     signature: String,
@@ -108,14 +116,14 @@ pub(crate) async fn handle_fee_rpc(State(state): State<AppState>, Json(req): Jso
     let params = req.params.and_then(|p| p.into_iter().next()).unwrap_or_default();
     let levels = params.levels.unwrap_or_else(|| vec![5000]);
 
-    let fee_tracker = state.fee_tracker.read().unwrap();
+    let fee_tracker = read_lock(&state.fee_tracker);
     let update = fee_tracker.get_update(&levels);
 
     Json(FeeRpcResponse { jsonrpc: req.jsonrpc, id: req.id, result: update.percentiles })
 }
 
 pub(crate) async fn handle_fee_window(State(state): State<AppState>, Json(req): Json<WindowRequest>) -> Json<FeeWindowResponse> {
-    let fee_tracker = state.fee_tracker.read().unwrap();
+    let fee_tracker = read_lock(&state.fee_tracker);
     let result = fee_tracker.get_window();
 
     Json(FeeWindowResponse { jsonrpc: req.jsonrpc, id: req.id, result })
@@ -144,11 +152,17 @@ async fn handle_fee_ws_client(mut socket: WebSocket, fee_tracker: SharedFeeTrack
             result = rx.recv() => {
                 if result.is_err() { break; }
                 let update = {
-                    let t = fee_tracker.read().unwrap();
+                    let t = read_lock(&fee_tracker);
                     t.get_update(&levels)
                 };
-                let msg = serde_json::to_string(&update).unwrap();
-                if socket.send(Message::Text(msg)).await.is_err() { break; }
+                match serde_json::to_string(&update) {
+                    Ok(msg) => {
+                        if socket.send(Message::Text(msg)).await.is_err() { break; }
+                    }
+                    Err(e) => {
+                        eprintln!("Failed to serialize fee update: {}", e);
+                    }
+                }
             }
         }
     }

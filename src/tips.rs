@@ -16,6 +16,14 @@ use crate::processor::Processor;
 use crate::window::{RollingWindow, percentile};
 use crate::{AppState, RpcRequest, WindowRequest, WsSubscribe};
 
+// Helper function to handle RwLock poisoning gracefully
+fn read_lock<T>(lock: &RwLock<T>) -> std::sync::RwLockReadGuard<'_, T> {
+    lock.read().unwrap_or_else(|e| {
+        eprintln!("RwLock poisoned (read), recovering");
+        e.into_inner()
+    })
+}
+
 #[derive(Clone)]
 struct TipInfo {
     signature: String,
@@ -65,7 +73,7 @@ impl TipTracker {
     }
 
     fn get_processor_stats(&self, proc: Processor, levels: &[u32]) -> ProcessorStats {
-        let window = self.data.get(&proc).unwrap();
+        let window = self.data.get(&proc).expect("Processor should exist in data map");
         let mut tips: Vec<u64> = window.blocks().iter().flat_map(|(_, t)| t.iter().map(|ti| ti.lamports)).collect();
         tips.sort_unstable();
         let (slot_start, slot_end) = window.slot_range();
@@ -93,7 +101,7 @@ impl TipTracker {
         let procs = if processors.is_empty() { Processor::all().to_vec() } else { processors.to_vec() };
 
         procs.iter().map(|proc| {
-            let window = self.data.get(proc).unwrap();
+            let window = self.data.get(proc).expect("Processor should exist in data map");
             let blocks = window.blocks().iter().map(|(slot, tips)| {
                 let tips = tips.iter().map(|ti| TipEntry {
                     signature: ti.signature.clone(),
@@ -186,7 +194,7 @@ pub(crate) async fn handle_rpc(State(state): State<AppState>, Json(req): Json<Rp
     let levels = params.levels.unwrap_or_else(|| vec![5000]);
     let processors = params.processors.unwrap_or_default();
 
-    let tracker = state.tracker.read().unwrap();
+    let tracker = read_lock(&state.tracker);
     let update = tracker.get_update(&processors, &levels);
     let result = update.data.into_iter().map(|s| ProcessorTips {
         processor: s.processor,
@@ -200,7 +208,7 @@ pub(crate) async fn handle_window(State(state): State<AppState>, Json(req): Json
     let params = req.params.and_then(|p| p.into_iter().next()).unwrap_or_default();
     let processors = params.processors.unwrap_or_default();
 
-    let tracker = state.tracker.read().unwrap();
+    let tracker = read_lock(&state.tracker);
     let result = tracker.get_window(&processors);
 
     Json(WindowResponse { jsonrpc: req.jsonrpc, id: req.id, result })
@@ -235,11 +243,17 @@ async fn handle_ws_client(mut socket: WebSocket, tracker: SharedTracker, mut rx:
             result = rx.recv() => {
                 if result.is_err() { break; }
                 let update = {
-                    let t = tracker.read().unwrap();
+                    let t = read_lock(&tracker);
                     t.get_update(&processors, &levels)
                 };
-                let msg = serde_json::to_string(&update).unwrap();
-                if socket.send(Message::Text(msg)).await.is_err() { break; }
+                match serde_json::to_string(&update) {
+                    Ok(msg) => {
+                        if socket.send(Message::Text(msg)).await.is_err() { break; }
+                    }
+                    Err(e) => {
+                        eprintln!("Failed to serialize tip update: {}", e);
+                    }
+                }
             }
         }
     }
