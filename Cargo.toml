@@ -1,5 +1,5 @@
 [package]
-name = "dynamic-tip"
+name = "sol-fee-tracker"
 version = "0.1.0"
 edition = "2024"
 
