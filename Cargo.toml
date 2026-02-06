@@ -38,3 +38,10 @@ yellowstone-grpc-proto = "6.1.0"
 maplit = "1.0.2"
 tonic = "0.13.0"
 bs58 = "0.5"
+
+[dev-dependencies]
+tokio-tungstenite = "0.21"
+
+[[example]]
+name = "test"
+path = "examples/test.rs"
