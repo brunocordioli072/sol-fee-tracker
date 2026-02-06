@@ -25,6 +25,7 @@ use tips::{SharedTracker, TipTracker};
 use fees::{SharedFeeTracker, FeeTracker};
 
 const SYSTEM_PROGRAM: Pubkey = solana_sdk::system_program::ID;
+const COMPUTE_BUDGET_PROGRAM: Pubkey = solana_sdk::compute_budget::ID;
 const PORT: u16 = 7000;
 
 // --- Shared Request Types ---
@@ -74,6 +75,18 @@ pub struct AppState {
 
 fn all_accounts() -> Vec<String> {
     Processor::all().iter().flat_map(|p| p.accounts().iter().map(|s| s.to_string())).collect()
+}
+
+fn parse_compute_unit_price(instruction_data: &[u8]) -> Option<u64> {
+    // SetComputeUnitPrice instruction format:
+    // [0]: discriminator (0x03)
+    // [1..9]: u64 price in little-endian
+    if instruction_data.len() == 9 && instruction_data[0] == 0x03 {
+        let price_bytes: [u8; 8] = instruction_data[1..9].try_into().ok()?;
+        Some(u64::from_le_bytes(price_bytes))
+    } else {
+        None
+    }
 }
 
 #[tokio::main]
@@ -187,13 +200,28 @@ async fn main() -> anyhow::Result<()> {
 
         // Priority fee processing (all transactions)
         if is_fee {
-            if let Some(cu_consumed) = meta.compute_units_consumed {
-                if cu_consumed > 0 {
-                    let num_sigs = message.header.as_ref().map(|h| h.num_required_signatures).unwrap_or(1) as u64;
-                    let priority_fee_lamports = meta.fee.saturating_sub(5000 * num_sigs);
-                    let cu_price = priority_fee_lamports.saturating_mul(1_000_000) / cu_consumed;
-                    fee_tracker.write().unwrap().add_fee(slot, signature.clone(), cu_price);
+            // Parse account keys to find compute budget program
+            let keys: Vec<Pubkey> = message.account_keys.iter()
+                .filter_map(|k| Pubkey::try_from(k.as_slice()).ok())
+                .collect();
+
+            let cb_idx = keys.iter().position(|k| *k == COMPUTE_BUDGET_PROGRAM);
+
+            // Look for SetComputeUnitPrice instruction
+            let mut cu_price: Option<u64> = None;
+
+            for ix in &message.instructions {
+                if Some(ix.program_id_index as usize) == cb_idx {
+                    if let Some(price) = parse_compute_unit_price(&ix.data) {
+                        cu_price = Some(price);
+                        break;
+                    }
                 }
+            }
+
+            // If compute unit price was set, track it
+            if let Some(price) = cu_price {
+                fee_tracker.write().unwrap().add_fee(slot, signature.clone(), price);
             }
 
             let mut ft = fee_tracker.write().unwrap();
