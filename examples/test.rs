@@ -31,7 +31,7 @@ fn pretty(v: &Value) {
 }
 
 async fn test_tip_percentiles() {
-    let data = rpc("/tips", json!({"levels": [5000, 7500, 9800]})).await;
+    let data = rpc("/tips", json!({"levels": [5000, 7500, 9000]})).await;
     pretty(&data);
 }
 
@@ -45,7 +45,7 @@ async fn test_tip_ws() {
         .await
         .expect("ws connect failed — is the server running?");
 
-    let subscribe = json!({"levels": [5000, 7500, 9800], "processors": ["jito"]});
+    let subscribe = json!({"levels": [5000, 7500, 9000], "processors": ["jito"]});
     socket.send(Message::Text(subscribe.to_string())).await.unwrap();
     println!("Connected");
 
@@ -65,7 +65,7 @@ async fn test_tip_ws() {
 }
 
 async fn test_fee_percentiles() {
-    let data = rpc("/fees", json!({"levels": [5000, 7500, 9800]})).await;
+    let data = rpc("/fees", json!({"levels": [5000, 7500, 9000]})).await;
     pretty(&data);
 }
 

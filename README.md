@@ -7,7 +7,7 @@ A Solana tip tracking service that monitors tips sent to various block builders 
 - Connects to Solana via Yellowstone gRPC to stream transaction data
 - Tracks tip amounts sent to 7 block builders: Jito, Nextblock, Sender, Zeroslot, Bloxroute, Astralane, and Blockrazor
 - Tracks priority fees across all transactions
-- Maintains configurable rolling windows per processor
+- Maintains configurable rolling windows
 - Calculates percentile-based tip and fee estimates (e.g., p50, p75, p98)
 - Exposes data via RPC and WebSocket APIs
 
