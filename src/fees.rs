@@ -44,15 +44,44 @@ impl FeeTracker {
     }
 
     fn get_update(&self, levels: &[u32]) -> FeeWsUpdate {
-        let mut fees: Vec<u64> = self.data.blocks().iter().flat_map(|(_, f)| f.iter().map(|fi| fi.priority_fee)).collect();
-        fees.sort_unstable();
         let (slot_start, slot_end) = self.data.slot_range();
+        let count = self.data.blocks().iter().map(|(_, f)| f.len()).sum();
 
         let percentiles = levels.iter().map(|&level| {
-            LevelFee { level, fee: percentile(&fees, level) }
+            // Use all blocks in the window (size controlled by max_fee_blocks in config)
+            let recent_blocks: Vec<_> = self.data.blocks().iter()
+                .filter(|(_, fees)| !fees.is_empty())
+                .collect();
+
+            if recent_blocks.is_empty() {
+                return LevelFee { level, fee: 0 };
+            }
+
+            // Calculate percentile per block
+            let per_block_percentiles: Vec<u64> = recent_blocks.iter()
+                .filter_map(|(_, fees)| {
+                    if fees.is_empty() {
+                        return None;
+                    }
+
+                    let mut block_fees: Vec<u64> = fees.iter().map(|fi| fi.priority_fee).collect();
+                    block_fees.sort_unstable();
+
+                    Some(percentile(&block_fees, level))
+                })
+                .collect();
+
+            // Average the per-block percentiles
+            let fee = if per_block_percentiles.is_empty() {
+                0
+            } else {
+                per_block_percentiles.iter().sum::<u64>() / per_block_percentiles.len() as u64
+            };
+
+            LevelFee { level, fee }
         }).collect();
 
-        FeeWsUpdate { slot_start, slot_end, count: fees.len(), percentiles }
+        FeeWsUpdate { slot_start, slot_end, count, percentiles }
     }
 
     fn get_window(&self) -> Vec<SlotFees> {

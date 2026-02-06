@@ -74,19 +74,48 @@ impl TipTracker {
 
     fn get_processor_stats(&self, proc: Processor, levels: &[u32]) -> ProcessorStats {
         let window = self.data.get(&proc).expect("Processor should exist in data map");
-        let mut tips: Vec<u64> = window.blocks().iter().flat_map(|(_, t)| t.iter().map(|ti| ti.lamports)).collect();
-        tips.sort_unstable();
         let (slot_start, slot_end) = window.slot_range();
+        let total_tips = window.blocks().iter().map(|(_, t)| t.len()).sum();
 
         let percentiles = levels.iter().map(|&level| {
-            LevelTip { level, tip: percentile(&tips, level) }
+            // Use all blocks in the window (size controlled by max_tip_blocks in config)
+            let recent_blocks: Vec<_> = window.blocks().iter()
+                .filter(|(_, tips)| !tips.is_empty())
+                .collect();
+
+            if recent_blocks.is_empty() {
+                return LevelTip { level, tip: 0 };
+            }
+
+            // Calculate percentile per block
+            let per_block_percentiles: Vec<u64> = recent_blocks.iter()
+                .filter_map(|(_, tips)| {
+                    if tips.is_empty() {
+                        return None;
+                    }
+
+                    let mut block_tips: Vec<u64> = tips.iter().map(|ti| ti.lamports).collect();
+                    block_tips.sort_unstable();
+
+                    Some(percentile(&block_tips, level))
+                })
+                .collect();
+
+            // Average the per-block percentiles
+            let tip = if per_block_percentiles.is_empty() {
+                0
+            } else {
+                per_block_percentiles.iter().sum::<u64>() / per_block_percentiles.len() as u64
+            };
+
+            LevelTip { level, tip }
         }).collect();
 
         ProcessorStats {
             processor: proc,
             slot_start,
             slot_end,
-            tips: tips.len(),
+            tips: total_tips,
             percentiles,
         }
     }
@@ -198,7 +227,7 @@ pub(crate) async fn handle_rpc(State(state): State<AppState>, Json(req): Json<Rp
     let update = tracker.get_update(&processors, &levels);
     let result = update.data.into_iter().map(|s| ProcessorTips {
         processor: s.processor,
-        tips: s.percentiles.into_iter().map(|p| LevelTip { level: p.level, tip: p.tip }).collect(),
+        tips: s.percentiles,
     }).collect();
 
     Json(RpcResponse { jsonrpc: req.jsonrpc, id: req.id, result })
