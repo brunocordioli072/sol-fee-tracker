@@ -11,7 +11,7 @@ pub struct Config {
 pub struct NetworkConfig {
     pub grpc_url: String,
     pub grpc_token: String,
-    pub max_blocks: usize,
+    pub max_tip_blocks: usize,
     pub max_fee_blocks: usize,
     #[serde(default)]
     pub exclude_accounts: Vec<String>,

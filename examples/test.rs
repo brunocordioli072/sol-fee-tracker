@@ -30,18 +30,18 @@ fn pretty(v: &Value) {
     println!("{}", serde_json::to_string_pretty(v).unwrap());
 }
 
-async fn test_percentiles() {
-    let data = rpc("/", json!({"levels": [5000, 7500, 9800]})).await;
+async fn test_tip_percentiles() {
+    let data = rpc("/tips", json!({"levels": [5000, 7500, 9800]})).await;
     pretty(&data);
 }
 
-async fn test_window() {
-    let data = rpc("/window", json!({"processors": ["jito"]})).await;
+async fn test_tip_window() {
+    let data = rpc("/tips/window", json!({"processors": ["jito"]})).await;
     pretty(&data);
 }
 
-async fn test_ws() {
-    let (mut socket, _) = connect_async(format!("{WS_URL}/ws"))
+async fn test_tip_ws() {
+    let (mut socket, _) = connect_async(format!("{WS_URL}/tips/ws"))
         .await
         .expect("ws connect failed — is the server running?");
 
@@ -103,14 +103,14 @@ async fn main() {
     let cmd = env::args().nth(1);
 
     match cmd.as_deref() {
-        Some("percentiles") => test_percentiles().await,
-        Some("window") => test_window().await,
-        Some("ws") => test_ws().await,
+        Some("tip-percentiles") => test_tip_percentiles().await,
+        Some("tip-window") => test_tip_window().await,
+        Some("tip-ws") => test_tip_ws().await,
         Some("fee-percentiles") => test_fee_percentiles().await,
         Some("fee-window") => test_fee_window().await,
         Some("fee-ws") => test_fee_ws().await,
         _ => {
-            eprintln!("Usage: cargo run --example test -- <percentiles|window|ws|fee-percentiles|fee-window|fee-ws>");
+            eprintln!("Usage: cargo run --example test -- <tip-percentiles|tip-window|tip-ws|fee-percentiles|fee-window|fee-ws>");
             std::process::exit(1);
         }
     }

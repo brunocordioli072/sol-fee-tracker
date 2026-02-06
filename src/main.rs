@@ -94,9 +94,9 @@ async fn main() -> anyhow::Result<()> {
     };
 
     let app = Router::new()
-        .route("/", post(tips::handle_rpc))
-        .route("/window", post(tips::handle_window))
-        .route("/ws", get(tips::handle_ws))
+        .route("/tips", post(tips::handle_rpc))
+        .route("/tips/window", post(tips::handle_window))
+        .route("/tips/ws", get(tips::handle_ws))
         .route("/fees", post(fees::handle_fee_rpc))
         .route("/fees/window", post(fees::handle_fee_window))
         .route("/fees/ws", get(fees::handle_fee_ws))

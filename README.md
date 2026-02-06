@@ -224,9 +224,9 @@ Response (on each update):
 Run endpoint tests against a running server using the Rust example binary:
 
 ```bash
-cargo run --example test -- percentiles
-cargo run --example test -- window
-cargo run --example test -- ws
+cargo run --example test -- tip-percentiles
+cargo run --example test -- tip-window
+cargo run --example test -- tip-ws
 cargo run --example test -- fee-percentiles
 cargo run --example test -- fee-window
 cargo run --example test -- fee-ws

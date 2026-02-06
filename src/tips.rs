@@ -29,7 +29,7 @@ pub struct TipTracker {
 
 impl TipTracker {
     pub fn new() -> Self {
-        let max_blocks = config::Config::get().network.max_blocks;
+        let max_blocks = config::Config::get().network.max_tip_blocks;
         let mut data = HashMap::new();
         let mut account_to_processor = HashMap::new();
 
