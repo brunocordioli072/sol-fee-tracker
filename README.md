@@ -66,11 +66,11 @@ Server starts on `http://0.0.0.0:7000`
 
 ## Usage
 
-### RPC (POST /)
+### RPC (POST /tips)
 
 Request tip percentiles:
 ```bash
-curl -X POST http://127.0.0.1:7000 \
+curl -X POST http://127.0.0.1:7000/tips \
   -H "Content-Type: application/json" \
   -d '{"jsonrpc":"2.0","id":1,"params":[{"levels":[5000,9800]}]}'
 ```
@@ -103,11 +103,11 @@ Response:
 - `processors`: optional filter (e.g., `["jito","nextblock"]`)
 - `tip`: tip amount in lamports
 
-### Window (POST /window)
+### Window (POST /tips/window)
 
 Get the raw rolling window data (all tips per slot):
 ```bash
-curl -X POST http://127.0.0.1:7000/window \
+curl -X POST http://127.0.0.1:7000/tips/window \
   -H "Content-Type: application/json" \
   -d '{"jsonrpc":"2.0","id":1,"params":[{"processors":["jito"]}]}'
 ```
@@ -222,11 +222,11 @@ Response (on each update):
 }
 ```
 
-### Tip WebSocket (GET /ws)
+### Tip WebSocket (GET /tips/ws)
 
 Connect and receive updates when new data is available:
 ```bash
-websocat ws://127.0.0.1:7000/ws
+websocat ws://127.0.0.1:7000/tips/ws
 ```
 
 Send a subscribe message to set your percentiles:
