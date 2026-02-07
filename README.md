@@ -52,8 +52,8 @@ This approach gives equal weight to each complete block, providing stable estima
 [network]
 grpc_url = "https://grpc.ny.shyft.to"
 grpc_token = "your-token"
-max_blocks = 50
-max_fee_blocks = 50
+max_tip_blocks = 25
+max_fee_blocks = 10
 exclude_accounts = []
 ```
 
