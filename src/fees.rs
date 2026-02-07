@@ -43,22 +43,21 @@ impl FeeTracker {
         self.data.should_broadcast(slot)
     }
 
-    fn get_update(&self, levels: &[u32]) -> FeeWsUpdate {
+    fn get_update(&self, percentiles: &[u32]) -> FeeWsUpdate {
         let (slot_start, slot_end) = self.data.slot_range();
         let count = self.data.blocks().iter().map(|(_, f)| f.len()).sum();
 
-        let percentiles = levels.iter().map(|&level| {
-            // Use all blocks in the window (size controlled by max_fee_blocks in config)
-            let recent_blocks: Vec<_> = self.data.blocks().iter()
-                .filter(|(_, fees)| !fees.is_empty())
-                .collect();
+        let percentiles = percentiles.iter().map(|&pct| {
+            // Calculate percentile per block using: index = min(pct, 9999) × N ÷ 10000
+            // IMPORTANT: Exclude the most recent slot (still forming) - only use complete blocks
+            let blocks: Vec<_> = self.data.blocks().iter().collect();
+            let complete_blocks = if blocks.len() > 1 {
+                &blocks[..blocks.len() - 1] // Exclude last block (still forming)
+            } else {
+                &blocks[..]
+            };
 
-            if recent_blocks.is_empty() {
-                return LevelFee { level, fee: 0 };
-            }
-
-            // Calculate percentile per block
-            let per_block_percentiles: Vec<u64> = recent_blocks.iter()
+            let per_block_percentiles: Vec<u64> = complete_blocks.iter()
                 .filter_map(|(_, fees)| {
                     if fees.is_empty() {
                         return None;
@@ -67,18 +66,18 @@ impl FeeTracker {
                     let mut block_fees: Vec<u64> = fees.iter().map(|fi| fi.priority_fee).collect();
                     block_fees.sort_unstable();
 
-                    Some(percentile(&block_fees, level))
+                    Some(percentile(&block_fees, pct))
                 })
                 .collect();
 
-            // Average the per-block percentiles
-            let fee = if per_block_percentiles.is_empty() {
-                0
-            } else {
-                per_block_percentiles.iter().sum::<u64>() / per_block_percentiles.len() as u64
-            };
+            if per_block_percentiles.is_empty() {
+                return LevelFee { level: pct, fee: 0 };
+            }
 
-            LevelFee { level, fee }
+            // Average the per-block percentiles
+            let fee = per_block_percentiles.iter().sum::<u64>() / per_block_percentiles.len() as u64;
+
+            LevelFee { level: pct, fee }
         }).collect();
 
         FeeWsUpdate { slot_start, slot_end, count, percentiles }
@@ -143,10 +142,11 @@ pub(crate) struct FeeWindowResponse {
 
 pub(crate) async fn handle_fee_rpc(State(state): State<AppState>, Json(req): Json<RpcRequest>) -> Json<FeeRpcResponse> {
     let params = req.params.and_then(|p| p.into_iter().next()).unwrap_or_default();
-    let levels = params.levels.unwrap_or_else(|| vec![5000]);
+    // Percentiles in range 0-10_000 (e.g., 5000 = 50.00%, 9000 = 90.00%)
+    let percentiles = params.levels.unwrap_or_else(|| vec![5000]);
 
     let fee_tracker = read_lock(&state.fee_tracker);
-    let update = fee_tracker.get_update(&levels);
+    let update = fee_tracker.get_update(&percentiles);
 
     Json(FeeRpcResponse { jsonrpc: req.jsonrpc, id: req.id, result: update.percentiles })
 }
@@ -163,7 +163,8 @@ pub(crate) async fn handle_fee_ws(State(state): State<AppState>, ws: WebSocketUp
 }
 
 async fn handle_fee_ws_client(mut socket: WebSocket, fee_tracker: SharedFeeTracker, mut rx: broadcast::Receiver<u64>) {
-    let mut levels: Vec<u32> = vec![5000];
+    // Percentiles in range 0-10_000 (e.g., 5000 = 50.00%, 9000 = 90.00%)
+    let mut percentiles: Vec<u32> = vec![5000];
 
     loop {
         tokio::select! {
@@ -171,7 +172,7 @@ async fn handle_fee_ws_client(mut socket: WebSocket, fee_tracker: SharedFeeTrack
                 match msg {
                     Some(Ok(Message::Text(text))) => {
                         if let Ok(sub) = serde_json::from_str::<WsSubscribe>(&text) {
-                            if let Some(l) = sub.levels { levels = l; }
+                            if let Some(l) = sub.levels { percentiles = l; }
                         }
                     }
                     Some(Ok(Message::Close(_))) | None => break,
@@ -182,7 +183,7 @@ async fn handle_fee_ws_client(mut socket: WebSocket, fee_tracker: SharedFeeTrack
                 if result.is_err() { break; }
                 let update = {
                     let t = read_lock(&fee_tracker);
-                    t.get_update(&levels)
+                    t.get_update(&percentiles)
                 };
                 match serde_json::to_string(&update) {
                     Ok(msg) => {

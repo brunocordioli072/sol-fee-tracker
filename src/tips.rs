@@ -72,23 +72,22 @@ impl TipTracker {
         false
     }
 
-    fn get_processor_stats(&self, proc: Processor, levels: &[u32]) -> ProcessorStats {
+    fn get_processor_stats(&self, proc: Processor, percentiles: &[u32]) -> ProcessorStats {
         let window = self.data.get(&proc).expect("Processor should exist in data map");
         let (slot_start, slot_end) = window.slot_range();
         let total_tips = window.blocks().iter().map(|(_, t)| t.len()).sum();
 
-        let percentiles = levels.iter().map(|&level| {
-            // Use all blocks in the window (size controlled by max_tip_blocks in config)
-            let recent_blocks: Vec<_> = window.blocks().iter()
-                .filter(|(_, tips)| !tips.is_empty())
-                .collect();
+        let percentiles = percentiles.iter().map(|&pct| {
+            // Calculate percentile per block using: index = min(pct, 9999) × N ÷ 10000
+            // IMPORTANT: Exclude the most recent slot (still forming) - only use complete blocks
+            let blocks: Vec<_> = window.blocks().iter().collect();
+            let complete_blocks = if blocks.len() > 1 {
+                &blocks[..blocks.len() - 1] // Exclude last block (still forming)
+            } else {
+                &blocks[..]
+            };
 
-            if recent_blocks.is_empty() {
-                return LevelTip { level, tip: 0 };
-            }
-
-            // Calculate percentile per block
-            let per_block_percentiles: Vec<u64> = recent_blocks.iter()
+            let per_block_percentiles: Vec<u64> = complete_blocks.iter()
                 .filter_map(|(_, tips)| {
                     if tips.is_empty() {
                         return None;
@@ -97,18 +96,18 @@ impl TipTracker {
                     let mut block_tips: Vec<u64> = tips.iter().map(|ti| ti.lamports).collect();
                     block_tips.sort_unstable();
 
-                    Some(percentile(&block_tips, level))
+                    Some(percentile(&block_tips, pct))
                 })
                 .collect();
 
-            // Average the per-block percentiles
-            let tip = if per_block_percentiles.is_empty() {
-                0
-            } else {
-                per_block_percentiles.iter().sum::<u64>() / per_block_percentiles.len() as u64
-            };
+            if per_block_percentiles.is_empty() {
+                return LevelTip { level: pct, tip: 0 };
+            }
 
-            LevelTip { level, tip }
+            // Average the per-block percentiles
+            let tip = per_block_percentiles.iter().sum::<u64>() / per_block_percentiles.len() as u64;
+
+            LevelTip { level: pct, tip }
         }).collect();
 
         ProcessorStats {
@@ -120,9 +119,9 @@ impl TipTracker {
         }
     }
 
-    fn get_update(&self, processors: &[Processor], levels: &[u32]) -> WsUpdate {
+    fn get_update(&self, processors: &[Processor], percentiles: &[u32]) -> WsUpdate {
         let procs = if processors.is_empty() { Processor::all().to_vec() } else { processors.to_vec() };
-        let data = procs.iter().map(|p| self.get_processor_stats(*p, levels)).collect();
+        let data = procs.iter().map(|p| self.get_processor_stats(*p, percentiles)).collect();
         WsUpdate { data }
     }
 
@@ -220,11 +219,12 @@ pub(crate) fn parse_transfer(data: &[u8]) -> Option<u64> {
 
 pub(crate) async fn handle_rpc(State(state): State<AppState>, Json(req): Json<RpcRequest>) -> Json<RpcResponse> {
     let params = req.params.and_then(|p| p.into_iter().next()).unwrap_or_default();
-    let levels = params.levels.unwrap_or_else(|| vec![5000]);
+    // Percentiles in range 0-10_000 (e.g., 5000 = 50.00%, 9000 = 90.00%)
+    let percentiles = params.levels.unwrap_or_else(|| vec![5000]);
     let processors = params.processors.unwrap_or_default();
 
     let tracker = read_lock(&state.tracker);
-    let update = tracker.get_update(&processors, &levels);
+    let update = tracker.get_update(&processors, &percentiles);
     let result = update.data.into_iter().map(|s| ProcessorTips {
         processor: s.processor,
         tips: s.percentiles,
@@ -248,7 +248,8 @@ pub(crate) async fn handle_ws(State(state): State<AppState>, ws: WebSocketUpgrad
 }
 
 async fn handle_ws_client(mut socket: WebSocket, tracker: SharedTracker, mut rx: broadcast::Receiver<u64>) {
-    let mut levels: Vec<u32> = vec![5000];
+    // Percentiles in range 0-10_000 (e.g., 5000 = 50.00%, 9000 = 90.00%)
+    let mut percentiles: Vec<u32> = vec![5000];
     let mut processors: Vec<Processor> = vec![];
 
     loop {
@@ -258,7 +259,7 @@ async fn handle_ws_client(mut socket: WebSocket, tracker: SharedTracker, mut rx:
                     Some(Ok(Message::Text(text))) => {
                         if let Ok(sub) = serde_json::from_str::<WsSubscribe>(&text) {
                             if let Some(l) = sub.levels {
-                                levels = l;
+                                percentiles = l;
                             }
                             if let Some(p) = sub.processors {
                                 processors = p;
@@ -273,7 +274,7 @@ async fn handle_ws_client(mut socket: WebSocket, tracker: SharedTracker, mut rx:
                 if result.is_err() { break; }
                 let update = {
                     let t = read_lock(&tracker);
-                    t.get_update(&processors, &levels)
+                    t.get_update(&processors, &percentiles)
                 };
                 match serde_json::to_string(&update) {
                     Ok(msg) => {

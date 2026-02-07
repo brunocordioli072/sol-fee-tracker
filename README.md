@@ -11,6 +11,40 @@ A Solana monitoring service that tracks tips sent to block builders and priority
 - Calculates percentile-based tip and fee estimates (e.g., p50, p75, p98)
 - Exposes data via RPC and WebSocket APIs
 
+## How Percentiles Are Calculated
+
+### Percentile Format
+Percentiles are specified in the range **0 to 10,000** representing 0.00% to 100.00%:
+- `5000` = 50.00% (median)
+- `7500` = 75.00%
+- `9000` = 90.00%
+- `9900` = 99.00%
+- `9999` = 99.99%
+
+This format allows for 0.01% precision in percentile calculations.
+
+### Calculation Method
+The service uses a **per-block averaging approach**:
+
+1. **Per-Block Percentiles**: For each complete block (slot), calculate the percentile using:
+   ```
+   index = min(percentile, 9999) × N ÷ 10000
+   value = sorted_array[index]
+   ```
+   Where `N` is the number of transactions in that block.
+
+2. **Average Across Blocks**: Take the arithmetic mean of the per-block percentile values across all blocks in the rolling window.
+
+3. **Incomplete Block Exclusion**: The most recent block (still forming) is excluded from calculations to avoid skewed results from incomplete data.
+
+**Example:** If you request percentile `9000` (90th percentile):
+- Block 1 (complete): 1000 txs → sorts them → returns value at index 900
+- Block 2 (complete): 800 txs → sorts them → returns value at index 720
+- Block 3 (forming): excluded from calculation
+- **Result**: Average of Block 1 and Block 2 percentile values
+
+This approach gives equal weight to each complete block, providing stable estimates that aren't overly influenced by high-volume blocks.
+
 ## Setup
 
 1. Create `config.toml`:
@@ -65,7 +99,7 @@ Response:
 }
 ```
 
-- `levels`: percentiles in basis points (5000 = p50, 9800 = p98)
+- `levels`: percentiles in range 0-10,000 (5000 = 50.00%, 9800 = 98.00%)
 - `processors`: optional filter (e.g., `["jito","nextblock"]`)
 - `tip`: tip amount in lamports
 
@@ -133,7 +167,7 @@ Response:
 }
 ```
 
-- `levels`: percentiles in basis points (5000 = p50, 9800 = p98)
+- `levels`: percentiles in range 0-10,000 (5000 = 50.00%, 9800 = 98.00%)
 - `fee`: priority fee in micro-lamports per compute unit
 
 ### Fee Window (POST /fees/window)

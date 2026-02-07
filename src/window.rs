@@ -48,11 +48,12 @@ impl<T> RollingWindow<T> {
     }
 }
 
-pub fn percentile(sorted: &[u64], level: u32) -> u64 {
+pub fn percentile(sorted: &[u64], percentile: u32) -> u64 {
     if sorted.is_empty() {
         0
     } else {
-        let idx = ((sorted.len() - 1) as f64 * (level as f64 / 10000.0).min(1.0)).round() as usize;
-        sorted[idx]
+        let percentile = percentile.min(9_999) as usize;
+        let idx = percentile * sorted.len() / 10_000;
+        sorted.get(idx).copied().unwrap_or(0)
     }
 }

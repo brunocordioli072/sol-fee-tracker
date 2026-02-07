@@ -91,6 +91,18 @@ fn parse_compute_unit_price(instruction_data: &[u8]) -> Option<u64> {
     }
 }
 
+fn parse_compute_unit_limit(instruction_data: &[u8]) -> Option<u32> {
+    // SetComputeUnitLimit instruction format:
+    // [0]: discriminator (0x02)
+    // [1..5]: u32 units in little-endian
+    if instruction_data.len() == 5 && instruction_data[0] == 0x02 {
+        let units_bytes: [u8; 4] = instruction_data[1..5].try_into().ok()?;
+        Some(u32::from_le_bytes(units_bytes))
+    } else {
+        None
+    }
+}
+
 // Helper functions to handle RwLock poisoning gracefully
 fn read_tracker<T>(lock: &RwLock<T>) -> Result<std::sync::RwLockReadGuard<'_, T>, ()> {
     lock.read().or_else(|e| {
@@ -255,20 +267,24 @@ async fn main() -> anyhow::Result<()> {
 
                     let cb_idx = keys.iter().position(|k| *k == COMPUTE_BUDGET_PROGRAM);
 
-                    // Look for SetComputeUnitPrice instruction
+                    // Look for SetComputeUnitPrice and SetComputeUnitLimit instructions
                     let mut cu_price: Option<u64> = None;
+                    let mut cu_limit: Option<u32> = None;
 
                     for ix in &message.instructions {
                         if Some(ix.program_id_index as usize) == cb_idx {
                             if let Some(price) = parse_compute_unit_price(&ix.data) {
                                 cu_price = Some(price);
-                                break;
+                            }
+                            if let Some(limit) = parse_compute_unit_limit(&ix.data) {
+                                cu_limit = Some(limit);
                             }
                         }
                     }
 
-                    // If compute unit price was set, track it
-                    if let Some(price) = cu_price {
+                    // Only track if both unit limit and unit price are present
+                    // Ignore transactions without a unit limit
+                    if let (Some(price), Some(_limit)) = (cu_price, cu_limit) {
                         if let Ok(mut ft) = write_tracker(&fee_tracker) {
                             ft.add_fee(slot, signature.clone(), price);
                         }
