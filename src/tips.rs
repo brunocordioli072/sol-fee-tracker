@@ -42,7 +42,8 @@ impl TipTracker {
         let mut account_to_processor = HashMap::new();
 
         for proc in Processor::all() {
-            data.insert(*proc, RollingWindow::new(max_blocks));
+            // Store max_blocks + 1 since we exclude the most recent (incomplete) block
+            data.insert(*proc, RollingWindow::new(max_blocks + 1));
             for acc in proc.accounts() {
                 if let Ok(pk) = Pubkey::from_str(acc) {
                     account_to_processor.insert(pk, *proc);

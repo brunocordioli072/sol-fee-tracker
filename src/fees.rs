@@ -32,7 +32,8 @@ pub struct FeeTracker {
 
 impl FeeTracker {
     pub fn new() -> Self {
-        Self { data: RollingWindow::new(config::Config::get().network.max_fee_blocks) }
+        // Store max_blocks + 1 since we exclude the most recent (incomplete) block
+        Self { data: RollingWindow::new(config::Config::get().network.max_fee_blocks + 1) }
     }
 
     pub fn add_fee(&mut self, slot: u64, signature: String, priority_fee: u64) {
