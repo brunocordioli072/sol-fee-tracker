@@ -55,14 +55,23 @@ Returns: `{"level": 5000, "fee": 1000}` (fee in micro-lamports per CU)
 ### POST /fees/window
 Get raw fee data per slot
 
+### POST /fees/pooled
+Get priority fee percentiles from a pooled, winsorized sample across the rolling window. More stable than `/fees` during quiet periods — pools all priority fees across complete blocks and clamps anything above p98 before computing percentiles. Any requested level at or above 9800 returns the same value (the cap); for unmodified high percentiles use `/fees`.
+```bash
+curl -X POST http://127.0.0.1:7000/fees/pooled -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":1,"params":[{"levels":[5000,9000]}]}'
+```
+Returns: `{"level": 5000, "fee": 1000}` (fee in micro-lamports per CU)
+
 ### WebSockets
 - `GET /tips/ws` - Subscribe to tip updates: `{"levels":[5000,9800],"processors":["jito"]}`
 - `GET /fees/ws` - Subscribe to fee updates: `{"levels":[5000,9800]}`
+- `GET /fees/pooled/ws` - Subscribe to pooled (winsorized) fee updates: `{"levels":[5000,9000]}`
 
 ## Testing
 
 ```bash
-cargo run --example test -- [tip-percentiles|tip-window|tip-ws|fee-percentiles|fee-window|fee-ws]
+cargo run --example test -- [tip-percentiles|tip-window|tip-ws|fee-percentiles|fee-window|fee-ws|fee-pooled-percentiles|fee-pooled-ws|fee-compare-ws]
 ```
 
 ## Supported Block Builders
