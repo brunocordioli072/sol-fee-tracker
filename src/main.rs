@@ -142,6 +142,8 @@ async fn main() -> anyhow::Result<()> {
         .route("/fees", post(fees::handle_fee_rpc))
         .route("/fees/window", post(fees::handle_fee_window))
         .route("/fees/ws", get(fees::handle_fee_ws))
+        .route("/fees/pooled", post(fees::handle_fee_pooled_rpc))
+        .route("/fees/pooled/ws", get(fees::handle_fee_pooled_ws))
         .with_state(state);
 
     let addr = SocketAddr::from(([0, 0, 0, 0], PORT));
@@ -151,9 +153,11 @@ async fn main() -> anyhow::Result<()> {
     println!("  POST http://{}/tips/window  - Get tip window data", addr);
     println!("  WS   ws://{}/tips/ws        - Tip updates stream", addr);
     println!("\nFee Endpoints:");
-    println!("  POST http://{}/fees         - Get fee percentiles", addr);
-    println!("  POST http://{}/fees/window  - Get fee window data", addr);
-    println!("  WS   ws://{}/fees/ws        - Fee updates stream\n", addr);
+    println!("  POST http://{}/fees              - Get fee percentiles", addr);
+    println!("  POST http://{}/fees/window       - Get fee window data", addr);
+    println!("  WS   ws://{}/fees/ws             - Fee updates stream", addr);
+    println!("  POST http://{}/fees/pooled       - Get pooled fee percentiles", addr);
+    println!("  WS   ws://{}/fees/pooled/ws      - Pooled fee updates stream\n", addr);
 
     tokio::spawn(async move {
         let listener = tokio::net::TcpListener::bind(addr).await
