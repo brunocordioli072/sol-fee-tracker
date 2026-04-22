@@ -3,7 +3,7 @@
 Monitors Solana tips to block builders and priority fees, providing real-time percentile estimates via RPC and WebSocket APIs.
 
 **Features:**
-- Tracks tips to 8 block builders (Jito, Nextblock, Sender, Zeroslot, Bloxroute, Astralane, Blockrazor, Nozomi)
+- Tracks tips to 9 block builders (Jito, Nextblock, Sender, Zeroslot, Bloxroute, Astralane, Blockrazor, Nozomi, Lunarlander)
 - Monitors priority fees across all transactions
 - Two percentile strategies per signal:
   - **Per-block-averaged** (`/tips`, `/fees`) — average of per-block percentiles; closest to "what's the typical top tip in a block"
@@ -124,4 +124,4 @@ cargo run --example test -- [tip-percentiles|tip-window|tip-ws|tip-pooled-percen
 
 ## Supported Block Builders
 
-jito, nextblock, sender, zeroslot, bloxroute, astralane, blockrazor, nozomi
+jito, nextblock, sender, zeroslot, bloxroute, astralane, blockrazor, nozomi, lunarlander

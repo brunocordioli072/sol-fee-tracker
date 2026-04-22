@@ -11,6 +11,7 @@ pub enum Processor {
     Astralane,
     Blockrazor,
     Nozomi,
+    Lunarlander,
 }
 
 impl Processor {
@@ -24,6 +25,7 @@ impl Processor {
             Processor::Astralane,
             Processor::Blockrazor,
             Processor::Nozomi,
+            Processor::Lunarlander,
         ]
     }
 
@@ -119,6 +121,18 @@ impl Processor {
                 "BnGKHAC386n4Qmv9xtpBVbRaUTKixjBe3oagkPFKtoy6",
                 "Dd7K2Fp7AtoN8xCghKDRmyqr5U169t48Tw5fEd3wT9mq",
                 "AP6qExwrbRgBAVaehg4b5xHENX815sMabtBzUzVB4v8S",
+            ],
+            Processor::Lunarlander => &[
+                "moon17L6BgxXRX5uHKudAmqVF96xia9h8ygcmG2sL3F",
+                "moon26Sek222Md7ZydcAGxoKG832DK36CkLrS3PQY4c",
+                "moon7fwyajcVstMoBnVy7UBcTx87SBtNoGGAaH2Cb8V",
+                "moonBtH9HvLHjLqi9ivyrMVKgFUsSfrz9BwQ9khhn1u",
+                "moonCJg8476LNFLptX1qrK8PdRsA1HD1R6XWyu9MB93",
+                "moonF2sz7qwAtdETnrgxNbjonnhGGjd6r4W4UC9284s",
+                "moonKfftMiGSak3cezvhEqvkPSzwrmQxQHXuspC96yj",
+                "moonQBUKBpkifLcTd78bfxxt4PYLwmJ5admLW6cBBs8",
+                "moonXwpKwoVkMegt5Bc776cSW793X1irL5hHV1vJ3JA",
+                "moonZ6u9E2fgk6eWd82621eLPHt9zuJuYECXAYjMY1C",
             ],
             Processor::Nozomi => &[
                 "TEMPaMeCRFAS9EKF53Jd6KpHxgL47uWLcpFArU1Fanq",
