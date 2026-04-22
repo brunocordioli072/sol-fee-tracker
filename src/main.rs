@@ -139,6 +139,10 @@ async fn main() -> anyhow::Result<()> {
         .route("/tips", post(tips::handle_rpc))
         .route("/tips/window", post(tips::handle_window))
         .route("/tips/ws", get(tips::handle_ws))
+        .route("/tips/pooled", post(tips::handle_rpc_pooled))
+        .route("/tips/pooled/ws", get(tips::handle_ws_pooled))
+        .route("/tips/pooled/aggregate", post(tips::handle_rpc_pooled_aggregate))
+        .route("/tips/pooled/aggregate/ws", get(tips::handle_ws_pooled_aggregate))
         .route("/fees", post(fees::handle_fee_rpc))
         .route("/fees/window", post(fees::handle_fee_window))
         .route("/fees/ws", get(fees::handle_fee_ws))
@@ -149,9 +153,13 @@ async fn main() -> anyhow::Result<()> {
     let addr = SocketAddr::from(([0, 0, 0, 0], PORT));
     println!("Server started on http://{}", addr);
     println!("\nTip Endpoints:");
-    println!("  POST http://{}/tips         - Get tip percentiles", addr);
-    println!("  POST http://{}/tips/window  - Get tip window data", addr);
-    println!("  WS   ws://{}/tips/ws        - Tip updates stream", addr);
+    println!("  POST http://{}/tips              - Get tip percentiles", addr);
+    println!("  POST http://{}/tips/window       - Get tip window data", addr);
+    println!("  WS   ws://{}/tips/ws             - Tip updates stream", addr);
+    println!("  POST http://{}/tips/pooled             - Get pooled tip percentiles", addr);
+    println!("  WS   ws://{}/tips/pooled/ws            - Pooled tip updates stream", addr);
+    println!("  POST http://{}/tips/pooled/aggregate   - Get pooled aggregate (union-of-processors) tip percentiles", addr);
+    println!("  WS   ws://{}/tips/pooled/aggregate/ws  - Pooled aggregate tip updates stream", addr);
     println!("\nFee Endpoints:");
     println!("  POST http://{}/fees              - Get fee percentiles", addr);
     println!("  POST http://{}/fees/window       - Get fee window data", addr);
