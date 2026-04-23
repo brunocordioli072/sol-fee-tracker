@@ -185,10 +185,9 @@ fn print_tip_compare(slot: u64, processor: &str, tips: &Value, pooled: &Value) {
 }
 
 async fn test_tip_pooled_aggregate_percentiles() {
-    // Default exclusion list for "fast-path market": everything except jito.
+    // Empty/omitted processors = pool across all builders.
     let data = rpc("/tips/pooled/aggregate", json!({
-        "levels": [5000, 7000, 9000, 9800],
-        "processors": ["astralane", "sender", "zeroslot", "bloxroute", "blockrazor", "nozomi"]
+        "levels": [5000, 7000, 9000, 9800]
     })).await;
     pretty(&data);
 }
@@ -199,11 +198,10 @@ async fn test_tip_pooled_aggregate_ws() {
         .expect("ws connect failed — is the server running?");
 
     let subscribe = json!({
-        "levels": [3000, 4000, 5000, 7000, 9000, 9800],
-        "processors": ["astralane", "sender", "zeroslot", "bloxroute", "blockrazor", "nozomi"]
+        "levels": [3000, 4000, 5000, 7000, 9000, 9800]
     });
     socket.send(Message::Text(subscribe.to_string())).await.unwrap();
-    println!("Connected — /tips/pooled/aggregate/ws over fast-path builders (excludes jito)");
+    println!("Connected — /tips/pooled/aggregate/ws over all builders");
 
     while let Some(Ok(msg)) = socket.next().await {
         match msg {

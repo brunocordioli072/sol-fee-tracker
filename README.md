@@ -31,18 +31,16 @@ Server starts on `http://0.0.0.0:7000`
 
 ## Choosing a Tip Endpoint
 
-Tipping markets differ by builder. Pick the endpoint that matches the market you're operating in:
-
 | Endpoint | Signal | When to use |
 |----------|--------|-------------|
-| `/tips` | Per-block-percentile, averaged across the window | **Jito** and other bundle-auction markets — "what does the winning tip look like?" is the relevant question, and averaging per-block maxes answers it. |
-| `/tips/pooled` | Dust-filtered + rank-trim-winsorized pool, per processor | Single-builder dynamic tipping on any processor. Stable under outlier churn; returns `0` when the pool is <20 non-dust samples (use `MinTip` fallback). |
-| `/tips/pooled/aggregate` | Same treatment applied to the **union** of multiple builders' pools | Fast-path routing where you send the same transaction to several builders and pay one tip to whichever lands. Dramatically denser sample (~4,000+ tips/window across 6 fast-path builders) — the most stable dynamic-tip signal. |
+| `/tips` | Per-block-percentile, averaged across the window | "What does the winning tip look like per block?" Averaging per-block maxes across the window; useful when you care about the typical top-of-block tip. |
+| `/tips/pooled` | Dust-filtered + rank-trim-winsorized pool, per processor | Single-builder dynamic tipping. Stable under outlier churn; returns `0` when the pool is <20 non-dust samples (use `MinTip` fallback). |
+| `/tips/pooled/aggregate` | Same treatment applied to the **union** of the requested processors' pools | One stable dynamic-tip signal covering multiple builders at once. Send the same transaction to several builders and pay one tip to whichever lands. Omit `processors` to pool across all builders. |
 
-Typical production setup for a bot that routes across Jito + fast-path builders:
-- Jito consumes `/tips/pooled/ws` with `processors: ["jito"]`.
-- Fast-path builders (Astralane, Sender, Zeroslot, Bloxroute, Blockrazor, Nozomi) all consume **one** `/tips/pooled/aggregate/ws` subscription and share the resulting percentile as their dynamic tip.
-- Always pair a dynamic percentile with `MinTip` (floor) and `FeeCap` (ceiling). The dynamic value can be 0 during startup or low-activity periods.
+Typical production setup — one aggregate subscription covering every builder you route through, shared across all their `dynamicTip` calls:
+- Subscribe once to `/tips/pooled/aggregate/ws` with `processors` listing the builders you use (or omit the field to pool all of them).
+- Use the returned percentile as the dynamic tip for every builder uniformly.
+- Always pair the dynamic percentile with `MinTip` (floor) and `FeeCap` (ceiling). The dynamic value can be 0 during startup or low-activity periods.
 
 ## API Endpoints
 
@@ -77,15 +75,15 @@ curl -X POST http://127.0.0.1:7000/tips/pooled -H "Content-Type: application/jso
 Returns: `{"level": 5000, "tip": 10000}` (tip in lamports)
 
 ### POST /tips/pooled/aggregate
-Get **one** set of tip percentiles computed on the union of the requested processors' pools. Designed for consumers that route the same transaction to multiple fast-path builders and pay a single tip value to whichever lands first — typical for bot-detection-resistant send paths that hit every builder except Jito.
+Get **one** set of tip percentiles computed on the union of the requested processors' pools. Designed for consumers that route the same transaction to several builders and pay a single tip value to whichever lands first.
 
-Same dust filter (≥10,000 lamports) and rank-trim winsorization as `/tips/pooled`. With 6 fast-path builders pooled you typically get 300–600 samples per window instead of the 60–150 you'd see per-builder, which makes percentiles substantially more stable under whale churn.
+Same dust filter (≥10,000 lamports) and rank-trim winsorization as `/tips/pooled`. Pooling across multiple builders yields thousands of samples per window, which makes percentiles substantially more stable under whale churn than any per-builder signal.
 
 Response contains `slot_start`, `slot_end` (union of per-processor windows), `count` (total tips across included processors pre-dust), `processors` (what was included), and `percentiles`.
 
 ```bash
 curl -X POST http://127.0.0.1:7000/tips/pooled/aggregate -H "Content-Type: application/json" \
-  -d '{"jsonrpc":"2.0","id":1,"params":[{"levels":[5000,9000],"processors":["astralane","sender","zeroslot","bloxroute","blockrazor","nozomi"]}]}'
+  -d '{"jsonrpc":"2.0","id":1,"params":[{"levels":[5000,9000]}]}'
 ```
 
 Omit `processors` (or pass an empty list) to pool across all builders.
@@ -112,7 +110,7 @@ Returns: `{"level": 5000, "fee": 1000}` (fee in micro-lamports per CU)
 ### WebSockets
 - `GET /tips/ws` - Subscribe to tip updates: `{"levels":[5000,9800],"processors":["jito"]}`
 - `GET /tips/pooled/ws` - Subscribe to pooled (winsorized) tip updates: `{"levels":[5000,9000],"processors":["jito"]}`
-- `GET /tips/pooled/aggregate/ws` - Subscribe to aggregate pooled tip updates across multiple builders: `{"levels":[5000,9000],"processors":["astralane","sender","zeroslot","bloxroute","blockrazor","nozomi"]}`
+- `GET /tips/pooled/aggregate/ws` - Subscribe to aggregate pooled tip updates across multiple builders: `{"levels":[5000,9000]}` (omit `processors` for all, or pass a list to restrict)
 - `GET /fees/ws` - Subscribe to fee updates: `{"levels":[5000,9800]}`
 - `GET /fees/pooled/ws` - Subscribe to pooled (winsorized) fee updates: `{"levels":[5000,9000]}`
 
